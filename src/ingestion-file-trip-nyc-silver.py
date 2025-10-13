@@ -1,35 +1,103 @@
+import logging
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col
+from pyspark.sql.functions import col, lit, year, month
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType, LongType, TimestampType
+import glob
 
-# Inicialize a SparkSession (ajuste se necessário)
-# spark = SparkSession.builder.appName("YellowTripSchemaFix").getOrCreate()
+# -----------------------------
+# CONFIGURAÇÃO DO LOGGER
+# -----------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
 
+# -----------------------------
+# CONFIGURAÇÕES INICIAIS
+# -----------------------------
 base_path = "/Volumes/ifood_test/default/nyc_taxi_data/2023/"
 
-# Você pode listar os arquivos manualmente ou usar glob:
-import glob
-file_paths = glob.glob(base_path + "yellow_tripdata_2023-*.parquet")
+# Função genérica para processar Yellow ou Green
+def process_taxi_data(taxi_color, schema, table_name):
+    path_pattern = base_path + f"{taxi_color}_tripdata_2023-*.parquet"
+    file_paths = glob.glob(path_pattern)
 
-if not file_paths:
-    raise FileNotFoundError(f"Nenhum arquivo encontrado em {base_path} com o padrão 'yellow_tripdata_2023-*.parquet'")
+    if not file_paths:
+        logger.error(f"Nenhum arquivo encontrado para {taxi_color} em {base_path}")
+        return None
+    else:
+        logger.info(f"{len(file_paths)} arquivos {taxi_color.capitalize()} encontrados.")
 
-# 2. Definição do Schema de Destino
-# Criamos um schema unificado com os tipos MAIS SEGUROS.
-# Usamos DOUBLE para tudo que é valor monetário/contagem e BIGINT para IDs.
+    all_dfs = []
+    for file_path in file_paths:
+        try:
+            logger.info(f"Iniciando processamento do arquivo: {file_path}")
+            df_temp = spark.read.parquet(file_path)
 
-# NOTA: TIMESTAMP_NTZ é o tipo do Spark para Timestamp sem fuso horário.
-# Se for usar em sistemas mais antigos, pode ser que precise mudar para TimestampType()
-final_schema = StructType([
-    StructField("VendorID", LongType(), True), # Escolhemos BIGINT/LongType (o maior)
+            for field in schema:
+                col_name = field.name
+                target_type = field.dataType
+                if col_name in df_temp.columns:
+                    df_temp = df_temp.withColumn(col_name, col(col_name).cast(target_type))
+                else:
+                    df_temp = df_temp.withColumn(col_name, lit(None).cast(target_type))
+
+            cols_to_select = [field.name for field in schema]
+            df_temp = df_temp.select(*cols_to_select)
+            df_temp = df_temp.withColumn("type_data", lit(taxi_color).cast(StringType()))
+            
+            all_dfs.append(df_temp)
+            logger.info(f"Arquivo processado com sucesso: {file_path}")
+
+        except Exception as e:
+            logger.error(f"ERRO ao processar arquivo {file_path}: {e}", exc_info=True)
+    
+    if not all_dfs:
+        logger.warning(f"Nenhum DataFrame válido foi processado para {taxi_color}.")
+        return None
+
+    logger.info(f"Unindo {len(all_dfs)} DataFrames processados para {taxi_color}.")
+    df_final = all_dfs[0]
+    for i in range(1, len(all_dfs)):
+        df_final = df_final.unionByName(all_dfs[i])
+
+    # Preparar DataFrame para gravação
+    df_final.createOrReplaceTempView(f"{taxi_color}_taxi_trips")
+    pickup_col = "tpep_pickup_datetime" if taxi_color == "yellow" else "lpep_pickup_datetime"
+    df_query = spark.sql(f"SELECT * FROM {taxi_color}_taxi_trips WHERE {pickup_col} IS NOT NULL")
+    df_source = df_query.withColumn("trip_year", year(col(pickup_col))) \
+                        .withColumn("trip_month", month(col(pickup_col)))
+
+    # Construir predicado replaceWhere
+    years_months = df_source.select("trip_year", "trip_month").distinct().collect()
+    replace_condition = " OR ".join([f"(trip_year={row.trip_year} AND trip_month={row.trip_month})"
+                                     for row in years_months])
+
+    logger.info(f"Gravando tabela Delta {table_name} com replaceWhere: {replace_condition}")
+    try:
+        df_source.write.format("delta") \
+            .mode("overwrite") \
+            .option("replaceWhere", replace_condition) \
+            .partitionBy("trip_year", "trip_month") \
+            .saveAsTable(table_name)
+        logger.info(f"Tabela Delta {table_name} gravada com sucesso!")
+    except Exception as e:
+        logger.error(f"ERRO ao gravar tabela Delta {table_name}: {e}", exc_info=True)
+
+# -----------------------------
+# DEFINIÇÃO DOS SCHEMAS
+# -----------------------------
+schema_yellow = StructType([
+    StructField("VendorID", LongType(), True),
     StructField("tpep_pickup_datetime", TimestampType(), True),
     StructField("tpep_dropoff_datetime", TimestampType(), True),
-    StructField("passenger_count", DoubleType(), True), # FORÇAMOS DOUBLE (o mais seguro)
+    StructField("passenger_count", DoubleType(), True),
     StructField("trip_distance", DoubleType(), True),
-    StructField("RatecodeID", DoubleType(), True), # FORÇAMOS DOUBLE (o mais seguro)
+    StructField("RatecodeID", DoubleType(), True),
     StructField("store_and_fwd_flag", StringType(), True),
-    StructField("PULocationID", LongType(), True), # Escolhemos BIGINT/LongType (o maior)
-    StructField("DOLocationID", LongType(), True), # Escolhemos BIGINT/LongType (o maior)
+    StructField("PULocationID", LongType(), True),
+    StructField("DOLocationID", LongType(), True),
     StructField("payment_type", LongType(), True),
     StructField("fare_amount", DoubleType(), True),
     StructField("extra", DoubleType(), True),
@@ -40,125 +108,18 @@ final_schema = StructType([
     StructField("total_amount", DoubleType(), True),
     StructField("congestion_surcharge", DoubleType(), True),
     StructField("airport_fee", DoubleType(), True),
-    StructField("type_data", StringType(), False), # Não nulo, pois será sempre "yellow"
-    # Adicione aqui qualquer outra coluna que possa aparecer
+    StructField("type_data", StringType(), False),
 ])
 
-
-# 3. e 4. Leitura, CAST e União
-all_dfs = []
-for file_path in file_paths:
-    print(f"Processando arquivo: {file_path}")
-    
-    # Lemos o arquivo Parquet com o schema original
-    df_temp = spark.read.parquet(file_path)
-    
-    # Aplicamos o CAST para o schema final, forçando a conversão
-    for field in final_schema:
-        col_name = field.name
-        target_type = field.dataType
-        
-        # Só aplica o cast se a coluna existir no DataFrame atual
-        if col_name in df_temp.columns:
-            # Garante que o tipo seja o definido no schema final
-            df_temp = df_temp.withColumn(col_name, col(col_name).cast(target_type))
-        else:
-            # Caso a coluna não exista no arquivo (menos provável, mas seguro)
-            # Adiciona a coluna como NULL com o tipo correto
-            from pyspark.sql.functions import lit
-            df_temp = df_temp.withColumn(col_name, lit(None).cast(target_type))
-
-    # Remove colunas que podem estar no arquivo e não no schema final (opcional, mas recomendado)
-    cols_to_select = [field.name for field in final_schema]
-    df_temp = df_temp.select(*cols_to_select)
-    df_temp = df_temp.withColumn("type_data", lit("yellow").cast(StringType()))
-    all_dfs.append(df_temp)
-
-# Unir todos os DataFrames
-if all_dfs:
-    df_yellow_final = all_dfs[0]
-    for i in range(1, len(all_dfs)):
-        # unionByName é crucial aqui para unir por nome, não por ordem
-        df_yellow_final = df_yellow_final.unionByName(all_dfs[i])
-
-from pyspark.sql.functions import col, year, month, concat, lit
-
-# 1. Definir o nome completo da tabela no Catálogo do Unity Catalog
-# Formato: CATALOG.SCHEMA.TABLE (Ajuste se o seu nome for diferente)
-CATALOG_TABLE_NAME = "ifood_test.default.taxi_trip_yellow" 
-
-# 2. Defina Colunas de Partição
-PARTITION_COLUMNS = ["trip_year", "trip_month"]
-
-
-# 1. Registro do DataFrame como View Temporária
-# O nome 'yellow_taxi_trips' se torna o nome da tabela que você usará no SQL.
-df_yellow_final.createOrReplaceTempView("yellow_taxi_trips")
-
-# 2. Execução da Consulta SQL
-# df_query contém os dados filtrados na memória
-df_query = spark.sql('select * from yellow_taxi_trips where tpep_pickup_datetime is not null')
-
-# 3. Preparar o DataFrame para Particionamento
-# df_source é o DataFrame de entrada com as colunas de partição
-df_source = df_query.withColumn("trip_year", year(col("tpep_pickup_datetime"))) \
-                    .withColumn("trip_month", month(col("tpep_pickup_datetime")))
-
-
-# *******************************************************************
-# PASSO CHAVE: CRIAR PREDICADO PARA SOBRESCREVER SOMENTE OS MESES CARREGADOS
-# *******************************************************************
-
-# 4. Descobrir quais anos/meses estão no DataFrame de origem (df_source)
-# Coletamos os valores para construir a condição SQL.
-years_months = df_source.select("trip_year", "trip_month").distinct().collect()
-
-# 5. Constrói o predicado SQL para o replaceWhere
-# Ex: "(trip_year=2023 AND trip_month=3) OR (trip_year=2023 AND trip_month=4)"
-replace_condition = " OR ".join([
-    f"(trip_year={row.trip_year} AND trip_month={row.trip_month})"
-    for row in years_months
-])
-
-
-# 6. Gravar a Tabela Delta usando Sobrescrita Seletiva (replaceWhere)
-# Esta operação substitui atomicamente os dados existentes no Delta Table que satisfazem a condição.
-df_source.write.format("delta") \
-    .mode("overwrite") \
-    .option("replaceWhere", replace_condition) \
-    .partitionBy(*PARTITION_COLUMNS) \
-    .saveAsTable(CATALOG_TABLE_NAME)
-
-#****************************** INICIO DA CARGA GREEN ****************************************
-
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, lit
-from pyspark.sql.types import StructType, StructField, StringType, DoubleType, LongType, TimestampType
-import glob
-
-# Definição do TÁXI e Caminho
-TAXI_COLOR = "green"
-base_path = "/Volumes/ifood_test/default/nyc_taxi_data/2023/"
-
-# 1. Ajustar o caminho para GREEN
-path_pattern = base_path + f"{TAXI_COLOR}_tripdata_2023-*.parquet"
-file_paths = glob.glob(path_pattern)
-
-if not file_paths:
-    raise FileNotFoundError(f"Nenhum arquivo encontrado em {base_path} com o padrão '{TAXI_COLOR}_tripdata_2023-*.parquet'")
-
-# 2. Definição do Schema de Destino (Universal para Green)
-# Schema baseado na imagem do 'green' e corrigido para tipos abrangentes
-final_schema = StructType([
-    # Colunas principais, usando o tipo mais seguro
-    StructField("VendorID", LongType(), True), 
-    StructField("lpep_pickup_datetime", TimestampType(), True), # NOTA: 'lpep' para green
-    StructField("lpep_dropoff_datetime", TimestampType(), True), # NOTA: 'lpep' para green
+schema_green = StructType([
+    StructField("VendorID", LongType(), True),
+    StructField("lpep_pickup_datetime", TimestampType(), True),
+    StructField("lpep_dropoff_datetime", TimestampType(), True),
     StructField("store_and_fwd_flag", StringType(), True),
-    StructField("RatecodeID", LongType(), True), # LongType é mais seguro que Integer
-    StructField("PULocationID", LongType(), True), 
-    StructField("DOLocationID", LongType(), True), 
-    StructField("passenger_count", DoubleType(), True), 
+    StructField("RatecodeID", LongType(), True),
+    StructField("PULocationID", LongType(), True),
+    StructField("DOLocationID", LongType(), True),
+    StructField("passenger_count", DoubleType(), True),
     StructField("trip_distance", DoubleType(), True),
     StructField("fare_amount", DoubleType(), True),
     StructField("extra", DoubleType(), True),
@@ -169,99 +130,13 @@ final_schema = StructType([
     StructField("total_amount", DoubleType(), True),
     StructField("payment_type", LongType(), True),
     StructField("congestion_surcharge", DoubleType(), True),
-    
-    # Colunas específicas do Green
-    StructField("ehail_fee", DoubleType(), True), 
-    StructField("trip_type", LongType(), True), 
-    
-    # Coluna de metadado
+    StructField("ehail_fee", DoubleType(), True),
+    StructField("trip_type", LongType(), True),
     StructField("type_data", StringType(), False),
-    
-    # NOTA: O 'airport_fee' não está na imagem do green, mas se estiver nos dados,
-    # ele será adicionado aqui para garantir a compatibilidade futura com o yellow.
-    # Ex: StructField("airport_fee", DoubleType(), True),
 ])
 
-
-# 3. e 4. Leitura, CAST e União
-all_dfs = []
-for file_path in file_paths:
-    
-    # Lemos o arquivo Parquet com o schema original
-    df_temp = spark.read.parquet(file_path)
-    
-    # Aplicamos o CAST para o schema final, forçando a conversão
-    for field in final_schema:
-        col_name = field.name
-        target_type = field.dataType
-        
-        # Só aplica o cast se a coluna existir no DataFrame atual
-        if col_name in df_temp.columns:
-            # Garante que o tipo seja o definido no schema final
-            df_temp = df_temp.withColumn(col_name, col(col_name).cast(target_type))
-        else:
-            # Adiciona a coluna como NULL com o tipo correto
-            df_temp = df_temp.withColumn(col_name, lit(None).cast(target_type))
-
-    # Remove colunas que podem estar no arquivo e não no schema final
-    cols_to_select = [field.name for field in final_schema]
-    df_temp = df_temp.select(*cols_to_select)
-    
-    # 5. Adiciona o valor 'green' à coluna de metadado
-    df_temp = df_temp.withColumn("type_data", lit(TAXI_COLOR).cast(StringType()))
-    
-    all_dfs.append(df_temp)
-
-# Unir todos os DataFrames
-if all_dfs:
-    df_green_final = all_dfs[0]
-    for i in range(1, len(all_dfs)):
-        # unionByName é crucial aqui para unir por nome, não por ordem
-        df_green_final = df_green_final.unionByName(all_dfs[i])
-
-from pyspark.sql.functions import col, year, month, concat, lit
-
-# 1. Definir o nome completo da tabela no Catálogo do Unity Catalog
-# Alterado para taxi_trip_green para evitar sobrescrever a tabela yellow
-CATALOG_TABLE_NAME = "ifood_test.default.taxi_trip_green" 
-
-# 2. Defina Colunas de Partição
-PARTITION_COLUMNS = ["trip_year", "trip_month"]
-
-
-# 1. Registro do DataFrame como View Temporária
-# Usamos 'green_taxi_trips' como nome da view
-df_green_final.createOrReplaceTempView("green_taxi_trips")
-
-# 2. Execução da Consulta SQL
-# Usamos a view do táxi verde. Se seu DataFrame unificado usou lpep_pickup_datetime, ajuste aqui.
-df_query = spark.sql('select * from green_taxi_trips where lpep_pickup_datetime is not null')
-
-# 3. Preparar o DataFrame para Particionamento
-# df_source é o DataFrame de entrada com as colunas de partição
-df_source = df_query.withColumn("trip_year", year(col("lpep_pickup_datetime"))) \
-                    .withColumn("trip_month", month(col("lpep_pickup_datetime")))
-
-
-# *******************************************************************
-# PASSO CHAVE: CRIAR PREDICADO PARA SOBRESCREVER SOMENTE OS MESES CARREGADOS
-# *******************************************************************
-
-# 4. Descobrir quais anos/meses estão no DataFrame de origem (df_source)
-# Coletamos os valores para construir a condição SQL.
-years_months = df_source.select("trip_year", "trip_month").distinct().collect()
-
-# 5. Constrói o predicado SQL para o replaceWhere
-# O predicado garante que apenas os meses/anos presentes no df_source serão sobrescritos no destino.
-replace_condition = " OR ".join([f"(trip_year={row.trip_year} AND trip_month={row.trip_month})"
-                                  for row in years_months
-])
-
-
-# 6. Gravar a Tabela Delta usando Sobrescrita Seletiva (replaceWhere)
-# Esta operação substitui atomicamente os dados existentes no Delta Table que satisfazem a condição.
-df_source.write.format("delta") \
-    .mode("overwrite") \
-    .option("replaceWhere", replace_condition) \
-    .partitionBy(*PARTITION_COLUMNS) \
-    .saveAsTable(CATALOG_TABLE_NAME)
+# -----------------------------
+# EXECUÇÃO
+# -----------------------------
+process_taxi_data("yellow", schema_yellow, "ifood_test.default.taxi_trip_yellow")
+process_taxi_data("green", schema_green, "ifood_test.default.taxi_trip_green")
