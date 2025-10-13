@@ -1,1 +1,8 @@
-pip install -r requirements.txt
+# Biblioteca para requisições HTTP
+requests
+
+# Bibliotecas para manipulação de dados (caso use PySpark ou Pandas)
+pyspark
+
+# Biblioteca oficial do Databricks (opcional, caso use CLI ou API)
+databricks-cli
