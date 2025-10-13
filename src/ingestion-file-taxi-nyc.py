@@ -1,5 +1,3 @@
-pip install requests
-
 # Importa bibliotecas necessárias
 import requests
 import os
