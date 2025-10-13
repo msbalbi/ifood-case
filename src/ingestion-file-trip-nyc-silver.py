@@ -128,3 +128,140 @@ df_source.write.format("delta") \
     .option("replaceWhere", replace_condition) \
     .partitionBy(*PARTITION_COLUMNS) \
     .saveAsTable(CATALOG_TABLE_NAME)
+
+#****************************** INICIO DA CARGA GREEN ****************************************
+
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, lit
+from pyspark.sql.types import StructType, StructField, StringType, DoubleType, LongType, TimestampType
+import glob
+
+# Definição do TÁXI e Caminho
+TAXI_COLOR = "green"
+base_path = "/Volumes/ifood_test/default/nyc_taxi_data/2023/"
+
+# 1. Ajustar o caminho para GREEN
+path_pattern = base_path + f"{TAXI_COLOR}_tripdata_2023-*.parquet"
+file_paths = glob.glob(path_pattern)
+
+if not file_paths:
+    raise FileNotFoundError(f"Nenhum arquivo encontrado em {base_path} com o padrão '{TAXI_COLOR}_tripdata_2023-*.parquet'")
+
+# 2. Definição do Schema de Destino (Universal para Green)
+# Schema baseado na imagem do 'green' e corrigido para tipos abrangentes
+final_schema = StructType([
+    # Colunas principais, usando o tipo mais seguro
+    StructField("VendorID", LongType(), True), 
+    StructField("lpep_pickup_datetime", TimestampType(), True), # NOTA: 'lpep' para green
+    StructField("lpep_dropoff_datetime", TimestampType(), True), # NOTA: 'lpep' para green
+    StructField("store_and_fwd_flag", StringType(), True),
+    StructField("RatecodeID", LongType(), True), # LongType é mais seguro que Integer
+    StructField("PULocationID", LongType(), True), 
+    StructField("DOLocationID", LongType(), True), 
+    StructField("passenger_count", DoubleType(), True), 
+    StructField("trip_distance", DoubleType(), True),
+    StructField("fare_amount", DoubleType(), True),
+    StructField("extra", DoubleType(), True),
+    StructField("mta_tax", DoubleType(), True),
+    StructField("tip_amount", DoubleType(), True),
+    StructField("tolls_amount", DoubleType(), True),
+    StructField("improvement_surcharge", DoubleType(), True),
+    StructField("total_amount", DoubleType(), True),
+    StructField("payment_type", LongType(), True),
+    StructField("congestion_surcharge", DoubleType(), True),
+    
+    # Colunas específicas do Green
+    StructField("ehail_fee", DoubleType(), True), 
+    StructField("trip_type", LongType(), True), 
+    
+    # Coluna de metadado
+    StructField("type_data", StringType(), False),
+    
+    # NOTA: O 'airport_fee' não está na imagem do green, mas se estiver nos dados,
+    # ele será adicionado aqui para garantir a compatibilidade futura com o yellow.
+    # Ex: StructField("airport_fee", DoubleType(), True),
+])
+
+
+# 3. e 4. Leitura, CAST e União
+all_dfs = []
+for file_path in file_paths:
+    
+    # Lemos o arquivo Parquet com o schema original
+    df_temp = spark.read.parquet(file_path)
+    
+    # Aplicamos o CAST para o schema final, forçando a conversão
+    for field in final_schema:
+        col_name = field.name
+        target_type = field.dataType
+        
+        # Só aplica o cast se a coluna existir no DataFrame atual
+        if col_name in df_temp.columns:
+            # Garante que o tipo seja o definido no schema final
+            df_temp = df_temp.withColumn(col_name, col(col_name).cast(target_type))
+        else:
+            # Adiciona a coluna como NULL com o tipo correto
+            df_temp = df_temp.withColumn(col_name, lit(None).cast(target_type))
+
+    # Remove colunas que podem estar no arquivo e não no schema final
+    cols_to_select = [field.name for field in final_schema]
+    df_temp = df_temp.select(*cols_to_select)
+    
+    # 5. Adiciona o valor 'green' à coluna de metadado
+    df_temp = df_temp.withColumn("type_data", lit(TAXI_COLOR).cast(StringType()))
+    
+    all_dfs.append(df_temp)
+
+# Unir todos os DataFrames
+if all_dfs:
+    df_green_final = all_dfs[0]
+    for i in range(1, len(all_dfs)):
+        # unionByName é crucial aqui para unir por nome, não por ordem
+        df_green_final = df_green_final.unionByName(all_dfs[i])
+
+from pyspark.sql.functions import col, year, month, concat, lit
+
+# 1. Definir o nome completo da tabela no Catálogo do Unity Catalog
+# Alterado para taxi_trip_green para evitar sobrescrever a tabela yellow
+CATALOG_TABLE_NAME = "ifood_test.default.taxi_trip_green" 
+
+# 2. Defina Colunas de Partição
+PARTITION_COLUMNS = ["trip_year", "trip_month"]
+
+
+# 1. Registro do DataFrame como View Temporária
+# Usamos 'green_taxi_trips' como nome da view
+df_green_final.createOrReplaceTempView("green_taxi_trips")
+
+# 2. Execução da Consulta SQL
+# Usamos a view do táxi verde. Se seu DataFrame unificado usou lpep_pickup_datetime, ajuste aqui.
+df_query = spark.sql('select * from green_taxi_trips where lpep_pickup_datetime is not null')
+
+# 3. Preparar o DataFrame para Particionamento
+# df_source é o DataFrame de entrada com as colunas de partição
+df_source = df_query.withColumn("trip_year", year(col("lpep_pickup_datetime"))) \
+                    .withColumn("trip_month", month(col("lpep_pickup_datetime")))
+
+
+# *******************************************************************
+# PASSO CHAVE: CRIAR PREDICADO PARA SOBRESCREVER SOMENTE OS MESES CARREGADOS
+# *******************************************************************
+
+# 4. Descobrir quais anos/meses estão no DataFrame de origem (df_source)
+# Coletamos os valores para construir a condição SQL.
+years_months = df_source.select("trip_year", "trip_month").distinct().collect()
+
+# 5. Constrói o predicado SQL para o replaceWhere
+# O predicado garante que apenas os meses/anos presentes no df_source serão sobrescritos no destino.
+replace_condition = " OR ".join([f"(trip_year={row.trip_year} AND trip_month={row.trip_month})"
+                                  for row in years_months
+])
+
+
+# 6. Gravar a Tabela Delta usando Sobrescrita Seletiva (replaceWhere)
+# Esta operação substitui atomicamente os dados existentes no Delta Table que satisfazem a condição.
+df_source.write.format("delta") \
+    .mode("overwrite") \
+    .option("replaceWhere", replace_condition) \
+    .partitionBy(*PARTITION_COLUMNS) \
+    .saveAsTable(CATALOG_TABLE_NAME)
