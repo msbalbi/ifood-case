@@ -93,7 +93,7 @@ display(dbutils.fs.ls(UC_PATH))
 ---
 
 ## 2️⃣ **Transformação e Carga (ETL)**  
-📂 Arquivo: `src/ingestion-file-trip-nyc-silver.py`
+📂 Arquivo: `src/ingestion-file-taxi-nyc.py`
 
 ### 🧩 **Resumo — Processamento e Carga dos Dados NYC Taxi (Yellow e Green)**
 
