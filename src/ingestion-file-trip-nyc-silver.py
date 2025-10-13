@@ -80,3 +80,51 @@ if all_dfs:
     for i in range(1, len(all_dfs)):
         # unionByName é crucial aqui para unir por nome, não por ordem
         df_yellow_final = df_yellow_final.unionByName(all_dfs[i])
+
+from pyspark.sql.functions import col, year, month, concat, lit
+
+# 1. Definir o nome completo da tabela no Catálogo do Unity Catalog
+# Formato: CATALOG.SCHEMA.TABLE (Ajuste se o seu nome for diferente)
+CATALOG_TABLE_NAME = "ifood_test.default.taxi_trip_yellow" 
+
+# 2. Defina Colunas de Partição
+PARTITION_COLUMNS = ["trip_year", "trip_month"]
+
+
+# 1. Registro do DataFrame como View Temporária
+# O nome 'yellow_taxi_trips' se torna o nome da tabela que você usará no SQL.
+df_yellow_final.createOrReplaceTempView("yellow_taxi_trips")
+
+# 2. Execução da Consulta SQL
+# df_query contém os dados filtrados na memória
+df_query = spark.sql('select * from yellow_taxi_trips where tpep_pickup_datetime is not null')
+
+# 3. Preparar o DataFrame para Particionamento
+# df_source é o DataFrame de entrada com as colunas de partição
+df_source = df_query.withColumn("trip_year", year(col("tpep_pickup_datetime"))) \
+                    .withColumn("trip_month", month(col("tpep_pickup_datetime")))
+
+
+# *******************************************************************
+# PASSO CHAVE: CRIAR PREDICADO PARA SOBRESCREVER SOMENTE OS MESES CARREGADOS
+# *******************************************************************
+
+# 4. Descobrir quais anos/meses estão no DataFrame de origem (df_source)
+# Coletamos os valores para construir a condição SQL.
+years_months = df_source.select("trip_year", "trip_month").distinct().collect()
+
+# 5. Constrói o predicado SQL para o replaceWhere
+# Ex: "(trip_year=2023 AND trip_month=3) OR (trip_year=2023 AND trip_month=4)"
+replace_condition = " OR ".join([
+    f"(trip_year={row.trip_year} AND trip_month={row.trip_month})"
+    for row in years_months
+])
+
+
+# 6. Gravar a Tabela Delta usando Sobrescrita Seletiva (replaceWhere)
+# Esta operação substitui atomicamente os dados existentes no Delta Table que satisfazem a condição.
+df_source.write.format("delta") \
+    .mode("overwrite") \
+    .option("replaceWhere", replace_condition) \
+    .partitionBy(*PARTITION_COLUMNS) \
+    .saveAsTable(CATALOG_TABLE_NAME)
