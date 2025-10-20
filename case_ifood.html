@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Desafio Técnico iFood - Data Architect</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;800&display=swap" rel="stylesheet">
+    <!-- Chosen Palette: Warm Neutrals & Red Accent -->
+    <!-- Application Structure Plan: A linear, scroll-based SPA that follows the presentation narrative (Intro, Architecture, Pipeline, Analysis, Conclusion). Uses visual cards for architecture/pipeline stages and interactive charts for the two data analyses. This structure is intuitive for a presentation, guiding the user through the project's story from start to finish. -->
+    <!-- Visualization & Content Choices: Architecture -> Goal: Explain Flow -> Viz: HTML/CSS Diagram -> Justification: More engaging than a table. Analysis 1 (Monthly Amount) -> Goal: Compare -> Viz: Bar Chart -> Justification: Clear comparison of discrete monthly values. Analysis 2 (Hourly Passengers) -> Goal: Show Distribution -> Viz: Bar Chart with interactive toggle for technical details -> Justification: Classic for hourly data; toggle adds depth without clutter. Library: Chart.js (Canvas). -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8f9fa;
+        }
+        .ifood-red {
+            color: #EA1D2C;
+        }
+        .bg-ifood-red {
+            background-color: #EA1D2C;
+        }
+        .border-ifood-red {
+            border-color: #EA1D2C;
+        }
+        .icon-circle {
+            width: 48px;
+            height: 48px;
+        }
+        .arrow {
+            font-size: 2.5rem;
+            line-height: 1;
+            color: #cbd5e1;
+        }
+        .chart-container {
+            position: relative;
+            width: 100%;
+            max-width: 800px;
+            margin-left: auto;
+            margin-right: auto;
+            height: 300px;
+            max-height: 400px;
+        }
+        @media (min-width: 768px) {
+            .chart-container {
+                height: 400px;
+            }
+        }
+        .accordion-content {
+            transition: max-height 0.3s ease-out, padding 0.3s ease-out;
+            max-height: 0;
+            overflow: hidden;
+            padding-top: 0;
+            padding-bottom: 0;
+        }
+        .accordion-content.active {
+            max-height: 500px; /* Grande o suficiente para o conteúdo */
+            padding-top: 1rem;
+            padding-bottom: 1rem;
+        }
+        .accordion-header {
+            cursor: pointer;
+        }
+        .rotate-90 {
+            transform: rotate(90deg);
+        }
+    </style>
+</head>
+<body class="text-gray-800">
+
+    <header class="bg-white/80 backdrop-blur-md sticky top-0 z-50 shadow-sm">
+        <nav class="container mx-auto px-6 py-4 flex justify-between items-center">
+            <h1 class="text-xl md:text-2xl font-bold">
+                Case Técnico <span class="ifood-red">iFood</span>
+            </h1>
+            <div class="hidden md:flex space-x-8 text-gray-600">
+                <a href="#arquitetura" class="hover:text-ifood-red transition-colors duration-300">Arquitetura</a>
+                <a href="#pipeline" class="hover:text-ifood-red transition-colors duration-300">Pipeline</a>
+                <a href="#analises" class="hover:text-ifood-red transition-colors duration-300">Análises</a>
+                <a href="#conclusao" class="hover:text-ifood-red transition-colors duration-300">Conclusão</a>
+            </div>
+        </nav>
+    </header>
+
+    <main class="container mx-auto px-6 py-12">
+
+        <section id="introducao" class="text-center mb-20">
+            <h2 class="text-4xl md:text-5xl font-extrabold mb-4">Solução de Data Architecture</h2>
+            <p class="max-w-3xl mx-auto text-lg text-gray-600">
+                Uma apresentação interativa do pipeline de dados construído para o desafio, desde a ingestão dos dados brutos de táxis de NY até a geração de insights acionáveis.
+            </p>
+        </section>
+
+        <section id="arquitetura" class="mb-20">
+            <div class="text-center mb-12">
+                <h3 class="text-3xl font-bold mb-2">Arquitetura Proposta: Padrão Lakehouse</h3>
+                <p class="text-gray-600 max-w-2xl mx-auto">Foi adotada a arquitetura Medalhão para garantir Governança, Qualidade e Performance em cada etapa do fluxo de dados.</p>
+            </div>
+            <div class="flex flex-col md:flex-row items-center justify-center gap-4 md:gap-0">
+                <div class="w-full md:w-1/3 p-4">
+                    <div class="bg-white rounded-xl shadow-lg p-6 border-t-4 border-blue-400 h-full">
+                        <h4 class="font-bold text-xl mb-2 text-blue-500">Bronze (Landing Zone)</h4>
+                        <p class="text-gray-600">Armazenamento dos arquivos Parquet originais e brutos, servindo como a fonte de verdade imutável.</p>
+                        <p class="mt-4 text-sm font-semibold text-gray-500">Ferramentas: Unity Catalog Volume, Python + Requests</p>
+                    </div>
+                </div>
+                <div class="arrow transform md:rotate-0 rotate-90">→</div>
+                <div class="w-full md:w-1/3 p-4">
+                     <div class="bg-white rounded-xl shadow-lg p-6 border-t-4 border-purple-400 h-full">
+                        <h4 class="font-bold text-xl mb-2 text-purple-500">Silver (Processada)</h4>
+                        <p class="text-gray-600">Dados limpos, padronizados e com tipagem corrigida. A camada de conformidade e qualidade.</p>
+                        <p class="mt-4 text-sm font-semibold text-gray-500">Ferramentas: PySpark, Delta Lake</p>
+                    </div>
+                </div>
+                <div class="arrow transform md:rotate-0 rotate-90">→</div>
+                <div class="w-full md:w-1/3 p-4">
+                    <div class="bg-white rounded-xl shadow-lg p-6 border-t-4 border-teal-400 h-full">
+                        <h4 class="font-bold text-xl mb-2 text-teal-500">Gold (Consumo)</h4>
+                        <p class="text-gray-600">Tabelas agregadas e otimizadas para consumo, prontas para análises e BI.</p>
+                        <p class="mt-4 text-sm font-semibold text-gray-500">Ferramentas: Delta Lake Particionado, SQL</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="pipeline" class="mb-20">
+            <div class="text-center mb-12">
+                <h3 class="text-3xl font-bold mb-2">O Pipeline em Ação: Detalhes Técnicos</h3>
+                <p class="text-gray-600 max-w-2xl mx-auto">Explore as decisões de Engenharia de Dados que garantiram a eficiência, resiliência e governança do pipeline.</p>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                
+                <!-- CARTÃO 1: CAMADA BRONZE (DOWNLOAD) -->
+                <div class="bg-white rounded-xl shadow-lg p-6">
+                    <div id="bronzeHeader" class="accordion-header flex justify-between items-center text-xl font-bold text-blue-600">
+                        Camada Bronze: Ingestão Eficiente
+                        <span id="bronzeArrow" class="text-2xl transform transition-transform">▶</span>
+                    </div>
+                    <div id="bronzeContent" class="accordion-content">
+                        <h5 class="font-semibold mt-2 mb-2 border-b pb-1">Decisões de Engenharia (Python/UC Volume)</h5>
+                        <ul class="list-disc list-inside text-gray-600 space-y-2 text-sm">
+                            <li><strong>Governança:</strong> Uso de Unity Catalog Volumes para centralizar permissões e acesso a arquivos brutos.</li>
+                            <li><strong>Parametrização:</strong> Flexibilidade via `dbutils.widgets` para fácil reprocessamento de meses/tipos de táxi.</li>
+                            <li><strong>Robustez:</strong> Uso de `requests.get(..., stream=True)` e gravação em *chunks* para lidar eficientemente com arquivos grandes.</li>
+                            <li><strong>Organização:</strong> Estrutura de destino lógica (`/CATALOG/SCHEMA/VOLUME/YEAR/`) para alta governança.</li>
+                            <li><strong>Resiliência:</strong> Tratamento de erros HTTP (`response.raise_for_status()`) e logging detalhado para auditoria.</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- CARTÃO 2: CAMADA SILVER (PROCESSAMENTO) -->
+                <div class="bg-white rounded-xl shadow-lg p-6">
+                    <div id="silverHeader" class="accordion-header flex justify-between items-center text-xl font-bold text-purple-600">
+                        Camada Silver/Gold: Qualidade e Otimização
+                        <span id="silverArrow" class="text-2xl transform transition-transform">▶</span>
+                    </div>
+                    <div id="silverContent" class="accordion-content">
+                        <h5 class="font-semibold mt-2 mb-2 border-b pb-1">Decisões de Modelagem (PySpark/Delta Lake)</h5>
+                        <ul class="list-disc list-inside text-gray-600 space-y-2 text-sm">
+                            <li><strong>Qualidade:</strong> **Schema Enforcement** com `CAST` e `unionByName` para garantir tipos de dados consistentes e unificação segura de arquivos.</li>
+                            <li><strong>Atomicidade/Segurança:</strong> Uso de **Sobrescrita Seletiva (`replaceWhere`)** para atualizar apenas as partições processadas, evitando perda de dados.</li>
+                            <li><strong>Performance:</strong> Gravação no formato **Delta Lake particionado** por ano/mês para acelerar as consultas analíticas (Evita Full Scan).</li>
+                            <li><strong>Flexibilidade:</strong> Tratamento da variação de schemas (`tpep_` vs `lpep_pickup_datetime`) entre os táxis Yellow e Green durante a unificação.</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="analises" class="mb-20">
+            <div class="text-center mb-12">
+                <h3 class="text-3xl font-bold mb-2">Análises e Insights</h3>
+                <p class="text-gray-600 max-w-2xl mx-auto">Visualização dos resultados obtidos através de consultas SQL na camada Gold, respondendo às perguntas do desafio.</p>
+            </div>
+            
+            <div class="bg-white rounded-xl shadow-lg p-8 mb-12">
+                <h4 class="text-2xl font-bold mb-2">Análise 1: Média de Valor Total Mensal (Yellow Taxis)</h4>
+                <p class="text-gray-600 mb-6">Esta análise permite identificar a sazonalidade e as tendências de arrecadação da frota de táxis amarelos ao longo do primeiro semestre de 2023. Nota: O valor médio é crescente de Março a Maio.</p>
+                <div class="chart-container">
+                    <canvas id="monthlyAmountChart"></canvas>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-xl shadow-lg p-8">
+                <h4 class="text-2xl font-bold mb-2">Análise 2: Média de Passageiros por Hora em Maio</h4>
+                <p class="text-gray-600 mb-6">Ao combinar dados de todos os táxis, podemos identificar os horários de pico de demanda em um dia útil típico, crucial para o planejamento da frota. Nota: O pico de média de passageiros por corrida ocorre às 22h.</p>
+                 <div class="chart-container">
+                    <canvas id="hourlyPassengerChart"></canvas>
+                </div>
+                 <div class="mt-6 text-center">
+                    <button id="toggleDetailsBtn" class="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300 transition-colors duration-300 text-sm">Mostrar Detalhes Técnicos</button>
+                    <div id="techDetails" class="hidden mt-4 text-left max-w-2xl mx-auto bg-gray-50 p-4 rounded-lg border">
+                        <h5 class="font-bold mb-2">🔑 Decisões Técnicas Chave</h5>
+                        <ul class="list-disc list-inside text-gray-600 text-sm space-y-2">
+                           <li><strong>Unificação com CTE:</strong> Uso de `WITH CombinedTrips AS (...)` para unir dados de táxis Yellow e Green de forma modular e legível.</li>
+                           <li><strong>Conversão de Fuso Horário:</strong> Uso de `FROM_UTC_TIMESTAMP(..., 'America/New_York')` para garantir que a análise por hora seja precisa, considerando o fuso horário local das operações.</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="conclusao" class="text-center bg-white rounded-xl shadow-lg p-8">
+             <h3 class="text-3xl font-bold mb-4">Conclusão e Próximos Passos</h3>
+             <p class="text-gray-600 max-w-3xl mx-auto mb-6">
+                Foi entregue um pipeline completo, parametrizável e escalável, com alta qualidade de dados garantida pelo Schema Enforcement e pela robustez do Delta Lake.
+            </p>
+            <div class="text-left max-w-md mx-auto">
+                <h4 class="font-semibold text-lg mb-2">Melhorias Contínuas:</h4>
+                 <ul class="list-decimal list-inside text-gray-600 space-y-2">
+                    <li>Implementar monitoramento de qualidade de dados e alertas com Databricks Workflows.</li>
+                    <li>Migrar a ingestão para streaming com Auto Loader para reduzir a latência.</li>
+                    <li>Criar uma tabela Gold unificada baseada em geolocalização para análises preditivas.</li>
+                </ul>
+            </div>
+        </section>
+
+    </main>
+
+    <footer class="text-center py-8 mt-12 border-t">
+        <p class="text-gray-500">&copy; 2025 - Apresentação do Desafio Técnico iFood.</p>
+    </footer>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            
+            const smoothScrollLinks = document.querySelectorAll('a[href^="#"]');
+            for (let link of smoothScrollLinks) {
+                link.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    let targetId = this.getAttribute('href');
+                    document.querySelector(targetId).scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start'
+                    });
+                });
+            }
+
+            const toggleBtn = document.getElementById('toggleDetailsBtn');
+            const techDetails = document.getElementById('techDetails');
+            toggleBtn.addEventListener('click', () => {
+                const isHidden = techDetails.classList.contains('hidden');
+                if (isHidden) {
+                    techDetails.classList.remove('hidden');
+                    toggleBtn.textContent = 'Ocultar Detalhes Técnicos';
+                } else {
+                    techDetails.classList.add('hidden');
+                    toggleBtn.textContent = 'Mostrar Detalhes Técnicos';
+                }
+            });
+
+            const bronzeHeader = document.getElementById('bronzeHeader');
+            const bronzeContent = document.getElementById('bronzeContent');
+            const bronzeArrow = document.getElementById('bronzeArrow');
+            
+            const silverHeader = document.getElementById('silverHeader');
+            const silverContent = document.getElementById('silverContent');
+            const silverArrow = document.getElementById('silverArrow');
+
+            function toggleAccordion(header, content, arrow) {
+                const isActive = content.classList.toggle('active');
+                if (isActive) {
+                    arrow.classList.add('rotate-90');
+                } else {
+                    arrow.classList.remove('rotate-90');
+                }
+            }
+
+            bronzeHeader.addEventListener('click', () => toggleAccordion(bronzeHeader, bronzeContent, bronzeArrow));
+            silverHeader.addEventListener('click', () => toggleAccordion(silverHeader, silverContent, silverArrow));
+
+
+            const ifoodRed = '#EA1D2C';
+            const ifoodRedTransparent = 'rgba(234, 29, 44, 0.6)';
+            
+            Chart.defaults.font.family = 'Inter, sans-serif';
+            Chart.defaults.plugins.tooltip.backgroundColor = '#2d3748';
+            Chart.defaults.plugins.tooltip.titleFont.size = 14;
+            Chart.defaults.plugins.tooltip.bodyFont.size = 12;
+            Chart.defaults.plugins.tooltip.padding = 10;
+
+            const monthlyAmountData = {
+                labels: ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio'],
+                datasets: [{
+                    label: 'Valor Total Médio (R$)',
+                    // DADOS ATUALIZADOS COM O RESULTADO REAL DA SUA CONSULTA
+                    data: [27.02, 26.90, 27.80, 28.27, 28.96],
+                    backgroundColor: ifoodRedTransparent,
+                    borderColor: ifoodRed,
+                    borderWidth: 2,
+                    borderRadius: 5,
+                    barPercentage: 0.6,
+                }]
+            };
+
+            const monthlyAmountChartCtx = document.getElementById('monthlyAmountChart').getContext('2d');
+            new Chart(monthlyAmountChartCtx, {
+                type: 'bar',
+                data: monthlyAmountData,
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                             callbacks: {
+                                label: function(context) {
+                                    return ` Média: R$ ${context.raw.toFixed(2)}`;
+                                }
+                            }
+                        },
+                        title: {
+                            display: true,
+                            text: 'Valor Médio por Viagem (Yellow Taxi)',
+                            font: {
+                                size: 16
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: false,
+                            min: 25, // Ajustado para dar mais destaque à variação
+                            title: {
+                                display: true,
+                                text: 'Valor Médio (R$)'
+                            }
+                        },
+                        x: {
+                            grid: {
+                                display: false
+                            }
+                        }
+                    }
+                }
+            });
+
+            const hourlyPassengerData = {
+                labels: ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', '23'],
+                datasets: [{
+                    label: 'Média de Passageiros',
+                    // DADOS ATUALIZADOS COM O RESULTADO REAL DA SUA CONSULTA
+                    data: [1.39, 1.26, 1.24, 1.25, 1.26, 1.28, 1.32, 1.33, 1.35, 1.35, 1.36, 1.37, 1.37, 1.36, 1.36, 1.37, 1.38, 1.40, 1.41, 1.41, 1.41, 1.42, 1.44, 1.43],
+                    backgroundColor: ifoodRed,
+                    borderColor: ifoodRed,
+                    borderWidth: 1,
+                    tension: 0.4,
+                    fill: false,
+                }]
+            };
+
+            const hourlyPassengerChartCtx = document.getElementById('hourlyPassengerChart').getContext('2d');
+            new Chart(hourlyPassengerChartCtx, {
+                type: 'line',
+                data: hourlyPassengerData,
+                 options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                         tooltip: {
+                             callbacks: {
+                                label: function(context) {
+                                    return ` Média: ${context.raw.toFixed(2)} passageiros`;
+                                }
+                            }
+                        },
+                        title: {
+                            display: true,
+                            text: 'Média de Passageiros por Hora do Dia (Maio)',
+                            font: {
+                                size: 16
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                           beginAtZero: false,
+                           min: 1.2, // Ajustado para dar mais destaque à variação do pico
+                           max: 1.5,
+                           title: {
+                                display: true,
+                                text: 'Média de Passageiros'
+                            }
+                        },
+                        x: {
+                           title: {
+                                display: true,
+                                text: 'Hora do Dia (Fuso Horário de NY)'
+                            }
+                        }
+                    }
+                }
+            });
+        });
+    </script>
+</body>
+</html>
