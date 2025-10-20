@@ -6,6 +6,7 @@ SELECT
   COUNT(*) AS total_trips_in_month
 FROM
   ifood_test.default.taxi_trip_yellow -- Use o nome completo da sua tabela
+WHERE trip_year = (2023) and trip_month in (1,2,3,4,5)
 GROUP BY
   trip_year,
   trip_month -- Agrupa pelas colunas de partição
